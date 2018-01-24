@@ -7,53 +7,107 @@ require 'uri'
 require 'open-uri'
 require 'json'
 require 'pathname'
+require 'active_support'
+require 'active_support/core_ext'
 
 class DocPost < Thor
-  @docpost_dir = Pathname.new(Dir.home) + '.docpost'
-  @conf_path = @docpost_dir + 'conf.json'
-  @conf = File.exist?(@conf_path) ? File.open(@conf_path) { |f| JSON.load(f) } : { }
-  @default = @conf['default']
-
   class << self
-    attr_accessor :conf, :default
+    attr_reader :conf, :default, :options_table
 
-    def option_override(v1, v2)
-      v2.nil? ? v1 : v2
+    private
+
+    def load_config(path)
+      conf = File.exist?(path) ? File.open(path) { |f| JSON.load(f) } : { }
+      conf.with_indifferent_access
+    end
+
+    def eval_option(cmd)
+      @options_table[cmd].each do |key, value|
+        value = value.clone
+        value.delete(:loadable)
+        option(key, value)
+      end
     end
   end
+
+  @docpost_dir = Pathname.new(Dir.home) + '.docpost'
+  @conf_path = @docpost_dir + 'conf.json'
+  @conf =  { default:
+               { sub:
+                   { teams:  nil,
+                     groups: nil,
+                     scope:  'private',
+                     tags:   [],
+                     draft:  false,
+                     notice: true,
+                     upload: 'standard',
+                   },
+               },
+             path:
+               { R:     nil,
+                 token: @docpost_dir + 'token.json',
+               },
+           }.with_indifferent_access
+  # should forbid to load keys undefined in the above
+  @conf.deep_merge!(load_config(@conf_path))
+  @default = @conf[:default]
+
+  @options_table = { }.with_indifferent_access
 
   class_option :version, :type => :boolean, :aliases => :'-v'
   map %w[--version -v] => :version
 
   desc 'sub [FILE] [options]', 'Submit (r)markdown text to DocBase (text is from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
-  option :teams,   type: :array,   default: default['sub']['teams']
-  option :title,   type: :string,  default: ''
-  option :tags,    type: :array,   default: default['sub']['tag']
-  option :groups,  type: :array,   default: default['sub']['groups']
-  option :draft,   type: :boolean, default: option_override(false, default['sub']['draft'])
-  option :scope,   enum: %w[everyone group private], default: default['sub']['scope']
-  option :notice,  type: :boolean, default: option_override(true, default['sub']['notice'])
-  option :type,    enum: %w[md Rmd]
-  option :dry_run, type: :boolean, default: false
-  option :upload,  enum: %w[all local], default: option_override('local', default['sub']['upload'])
+  # option priority: 1. options in JSON 2. options from a command line 3. in FILE (i.e. R Markdown title) 4. default
+  @options_table[:sub] =
+    { teams:        { type: :array,                     default: default[:sub][:teams]                   },
+      title:        { type: :string,                    default: ''                                      },
+      tags:         { type: :array,                     default: default[:sub][:tag]                     },
+      groups:       { type: :array,                     default: default[:sub][:groups]                  },
+      draft:        { type: :boolean,                   default: default[:sub][:draft]                   },
+      scope:        { enum: %w[everyone group private], default: default[:sub][:scope]                   },
+      notice:       { type: :boolean,                   default: default[:sub][:notice]                  },
+      type:         { enum: %w[md Rmd json]                                                              },
+      dry_run:      { type: :boolean,                   default: false,                  loadable: false },
+      upload:       { enum: %w[all standard],           default: default[:sub][:upload]                  },
+    }.with_indifferent_access
+  eval_option(:sub)
   def sub(path = nil)
     check_token
-    file_type = options[:type]
+    if 'json' == options[:type] || (!options[:type] && path && File.extname(path) =~ /^\.json$/i)
+      if path
+        info = load_info_json(path)
+      else
+        begin
+          info = JSON.load(STDIN)
+        rescue
+          error "load from STDIN failed. may be invalid JSON"
+          exit 1
+        end
+      end
+      path = File.expand_path(info[:body], File.dirname(path))
+      opts = options.dup.deep_merge!(info.reject { |key, _| 'body' == key })
+    else
+      opts = options
+    end
+
     check_title = proc do 
-      if !options[:title] || options[:title].empty?
+      if opts[:title].blank?
         STDERR.puts "ERROR: title is missing"
         help('sub')
         exit 1
       end
     end
+
     if path
+      dir = File.dirname(path)
       unless File.exist?(path)
         error "ERROR: file not exist - #{path}"
         exit 1
       end
       body = File.read(path)
-      unless options[:type]
+      unless opts[:type]
         ext = File.extname(path)
         case ext
         when /^\.md$/i
@@ -67,7 +121,8 @@ class DocPost < Thor
         end
       end
     else
-      case file_type
+      dir = Dir.pwd
+      case opts[:type]
       when 'Rmd'
         body = STDIN.read
       when 'md'
@@ -80,30 +135,30 @@ class DocPost < Thor
         file_type = 'md'
       end
     end
-    if 'group' != options[:scope] && options[:groups]
+    if 'group' != opts[:scope] && opts[:groups]
       error "ERROR: option \"scope\" should be \"group\" when group(s) are specified"
       help('sub')
       exit 1
     end
-    if 'group' == options[:scope] && (!options[:groups] || options[:groups].empty?)
+    if 'group' == opts[:scope] && (!opts[:groups] || opts[:groups].empty?)
       error "ERROR: should specify group(s) when scope is \"group\""
       help('sub')
       exit 1
     end
 
-    options[:teams].each do |team|
-      body = upload_and_substitute_images(team, body)
+    opts[:teams].each do |team|
+      body = upload_and_substitute_images(team, body, dir)
       json = {
-        title:  options[:title],
+        title:  opts[:title],
         body:   body,
-        draft:  options[:draft],
-        scope:  options[:scope],
-        tags:   options[:tags],
-        groups: options[:groups],
-        notice: options[:notice],
+        draft:  opts[:draft],
+        scope:  opts[:scope],
+        tags:   opts[:tags],
+        groups: opts[:groups],
+        notice: opts[:notice],
       }.compact.to_json
 
-      say "submitting" + (path ? ": #{path}" : '')
+      say 'submitting' + (path ? ": #{path}" : '')
       response = post("https://api.docbase.io/teams/#{team}/posts", json)
       handle_response(response)      
     end
@@ -128,7 +183,7 @@ class DocPost < Thor
       puts
       handle_response(response)
     when 'groups'
-      teams = args.empty? ? @default['print']['groups']['teams'] : args
+      teams = args.empty? ? @default[:print][:groups][:teams] : args
       unless teams
         error 'no teams are specified'
         exit 1
@@ -166,16 +221,88 @@ class DocPost < Thor
 
   def initialize(args = [], options = { }, config = { })
     @conf = DocPost.conf
-    @default = @conf['default']
-    @token = @conf['token']
+    @default = DocPost.default
+    @options_table = DocPost.options_table
     super(args, options, config)
   end
 
+  def load_info_json(path)
+    unless File.exist?(path)
+      error "file not exist: #{path}"
+      exit 1
+    end
+    begin
+      info = File.open(path) { |f| JSON.load(f).with_indifferent_access }
+    rescue
+      error "load failed. may be invalid JSON: #{path}"
+      exit 1
+    end
+    unless info.key?(:body)
+      error "should contain \"body\" key: #{path}"
+      exit 1
+    end
+    info.reject { |key, _| 'body' == key }.each do |key, value|
+      unless @options_table[:sub].key?(key)
+        error "#{path} has invalid key: #{key}"
+        exit 1
+      end
+      h = @options_table[:sub][key]
+      is_key_invalid = false
+      if h.key?(:loadable) && !h[:loadable]
+        is_key_invalid = true
+      elsif h.key?(:type)
+        type_to_class = { boolen:  [TrueClass, FalseClass],
+                          string:  [String],
+                          numeric: [Numeric],
+                          array:   [Array],
+                          hash:    [Hash]
+                        }
+        is_correct_type = type_to_class[h[:type]].inject(false) do |ret, klass|
+          ret ||= info[key].instance_of?(klass)
+        end
+        unless is_correct_type
+          error "the value of \"#{key}\" should be #{h[:type]}"
+          exit 1
+        end
+      elsif h.key?(:enum)
+        unless h[:enum].instance_of?(Array) && h[:enum].include?(option_from_file[key])
+          error "the value of \"#{key}\" should be #{h[:enum].to_s}}"
+          exit 1
+        end
+      else
+        is_key_invalid = true
+      end
+      if is_key_invalid
+        error "invalid key \"#{key}\" in #{path}"
+        exit 1
+      end
+    end
+    info
+  end
+
   def check_token
-    return if @token
+    return if load_token.present?
     error 'token is not registered'
-    help('set token')
+    help('set')
     exit 1
+  end
+
+  def load_token
+    path = @conf[:path][:token]
+    if path.blank?
+      error 'token path is empty'
+      exit 1
+    end
+    unless File.exist?(path)
+      error "token file not found: #{path}"
+      exit 1
+    end
+    begin
+      token = File.open(path) { |f| JSON.load(f).with_indifferent_access }
+    rescue
+      # error handling
+    end
+    token[:token]
   end
 
   def request(uri, klass, dry_run = false)
@@ -185,7 +312,7 @@ class DocPost < Thor
     
     request = klass.new(uri.request_uri)
     request['Content-Type'] = 'application/json'
-    request['X-DocBaseToken'] = @token
+    request['X-DocBaseToken'] = load_token
     yield request
 
     return nil if dry_run
@@ -203,32 +330,37 @@ class DocPost < Thor
   def update_config_file
   end
 
-  def upload_and_substitute_images(team, body)
+  def upload_and_substitute_images(team, body, dir)
     body = body.clone
     # to do: normalize path
     paths = body.scan(/!\[[^\[\]]*\]\(([^\(\)]*)\)/).flatten.uniq 
     paths.each do |path|
+      original_path = path.clone
       uri = URI.parse(path)
       should_upload = false
       case uri
-      when URI::HTTP, URI::HTTPS, URI::FTP
+      when URI::HTTP, URI::HTTPS
         should_upload = true if 'all' == options[:upload]
+      when URI::FTP
+        should_upload = true
       when URI::Generic
         should_upload = true
+        path = File.expand_path(path, dir)
       else
         error "cannot upload the following image: #{path}"
         exit 1
       end
       next unless should_upload
       content = nil
-      say "reading and uploading: #{uri.path}"
-      open(uri.path) { |f| content = f.read }
+      say "reading and uploading: #{path} ... "
+      open(path) { |f| content = f.read }
       json = {
-        name:    File.basename(uri.path),
+        name:    File.basename(path),
         content: Base64.strict_encode64(content)
       }.to_json
-      res = post("https://api.docbase.io/teams/#{team}/attachments", json)
-      body.gsub!(/!\[([^\[\]]*)\]\(#{path}\)/, JSON.parse(res.body)['markdown'])
+      response = post("https://api.docbase.io/teams/#{team}/attachments", json)
+      say "done (remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']})"
+      body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, JSON.parse(response.body)['markdown'])
     end
     body
   end
