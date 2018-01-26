@@ -48,6 +48,9 @@ class DocPost < Thor
                      notice: true,
                      upload: 'standard',
                    },
+                 upload:
+                   { list_markdown: false,
+                   }
                },
              path:
                { R:     nil,
@@ -60,8 +63,8 @@ class DocPost < Thor
 
   @options_table = { }.with_indifferent_access
 
-  class_option :version, :type => :boolean, :aliases => :'-v'
-  map %w[--version -v] => :version
+  class_option :version, :type => :boolean
+  map '--version' => :version
 
   desc 'sub [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
@@ -235,7 +238,8 @@ class DocPost < Thor
 
   desc 'upload {FILE,URI}S', 'Upload content to DocBase'
   @options_table[:upload] = [
-    { option: :teams, type: :array, default: default[:upload][:teams] },
+    { option: :teams,         type: :array,   default: default[:upload][:teams]                         },
+    { option: :list_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-l' },
   ]
   eval_option(:upload)
   def upload(*path_list)
@@ -243,14 +247,25 @@ class DocPost < Thor
       help('upload')
       exit 1
     end
+    markdown_list = []
     options[:teams].each do |team|
       path_list.each do |path|
         response = upload_file(team, path)
         handle_response_code(response)
+        markdown = JSON.parse(response.body)['markdown']
+        markdown_list.push(markdown)
         say "markdown: "
-        say "#{JSON.parse(response.body)['markdown']}", :green
+        say markdown, :green
         handle_quota(response)
         puts
+      end
+    end
+    say "all files uploaded"
+    say
+    if options[:list_markdown]
+      say 'markdown list:'
+      markdown_list.each do |markdown|
+        say markdown, :green
       end
     end
   end
