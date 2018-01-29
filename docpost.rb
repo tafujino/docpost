@@ -81,7 +81,7 @@ class DocPost < Thor
       help('print')
       exit 1
     end
-    check_token
+    check_token_existence
     target = args.shift
     case target
     when 'teams'
@@ -132,7 +132,7 @@ class DocPost < Thor
   ]
   eval_options(:submit)
   def submit(path = nil)
-    check_token
+    check_token_existence
     path, opts = sub_get_options(path, options)
 
     check_title = proc do 
