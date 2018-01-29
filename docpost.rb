@@ -63,9 +63,6 @@ class DocPost < Thor
 
   @options_table = { }.with_indifferent_access
 
-  class_option :version, :type => :boolean
-  map '--version' => :version
-
   desc 'sub [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
   # option priority: 1. options in JSON 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
