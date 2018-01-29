@@ -25,7 +25,7 @@ class DocPost < Thor
       conf.with_indifferent_access
     end
 
-    def eval_option(cmd)
+    def eval_options(cmd)
       @options_table[cmd].each do |h|
         next if h.key?(:cmdline) && (false == h[:cmdline])
         h = h.clone
@@ -84,14 +84,14 @@ class DocPost < Thor
     { option: :dry_run, type: :boolean,                   default: false,                  loadable: false },
     { option: :upload,  enum: %w[full standard],          default: default[:sub][:upload]                  },
   ]
-  eval_option(:sub)
+  eval_options(:sub)
   def sub(path = nil)
     check_token
     path, opts = sub_get_options(path, options)
 
     check_title = proc do 
       if opts[:title].blank?
-        error "title is missing"
+        error 'title is missing'
         help('sub')
         exit 1
       end
@@ -133,12 +133,12 @@ class DocPost < Thor
       end
     end
     if 'group' != opts[:scope] && opts[:groups]
-      error "option \"scope\" should be \"group\" when group(s) are specified"
+      error 'option "scope" should be "group" when group(s) are specified'
       help('sub')
       exit 1
     end
     if 'group' == opts[:scope] && (!opts[:groups] || opts[:groups].empty?)
-      error "should specify group(s) when scope is \"group\""
+      error 'should specify group(s) when scope is "group"'
       help('sub')
       exit 1
     end
@@ -186,7 +186,7 @@ class DocPost < Thor
     when 'groups'
       teams = args.empty? ? @default[:print][:groups][:teams] : args
       unless teams
-        error 'no teams are specified'
+        error 'no team is specified'
         exit 1
       end
       teams.each do |team|
@@ -209,9 +209,9 @@ class DocPost < Thor
       help('set')
       exit 1
     end
-    token = ask("type new token:", :echo => false)
+    token = ask('type new token:', :echo => false)
     if token.blank?
-      error "invalid token"
+      error 'invalid token'
       exit 1
     end
     path = @conf[:path][:token]
@@ -220,10 +220,10 @@ class DocPost < Thor
         f.puts JSON.pretty_generate({ token: token })
       end
     rescue
-      error "failed to update token"
+      error 'failed to update token'
       exit 1
     end
-    say "update succeeded"
+    say 'update succeeded'
   end
 
   desc 'remove token', 'Remove token'
@@ -238,10 +238,10 @@ class DocPost < Thor
 
   desc 'upload {FILE,URI}S', 'Upload content to DocBase'
   @options_table[:upload] = [
-    { option: :teams,         type: :array,   default: default[:upload][:teams]                         },
-    { option: :list_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-l' },
+    { option: :teams,            type: :array,   default: default[:upload][:teams]                         },
+    { option: :collect_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-c' },
   ]
-  eval_option(:upload)
+  eval_options(:upload)
   def upload(*path_list)
     if path_list.empty?
       help('upload')
@@ -250,19 +250,18 @@ class DocPost < Thor
     markdown_list = []
     options[:teams].each do |team|
       path_list.each do |path|
-        response = upload_file(team, path)
+        response, markdown = upload_file(team, path)
         handle_response_code(response)
-        markdown = JSON.parse(response.body)['markdown']
         markdown_list.push(markdown)
-        say "markdown: "
+        say 'markdown: '
         say markdown, :green
         handle_quota(response)
         puts
       end
     end
-    say "all files uploaded"
+    say 'all files uploaded'
     say
-    if options[:list_markdown]
+    if options[:collect_markdown]
       say 'markdown list:'
       markdown_list.each do |markdown|
         say markdown, :green
@@ -292,7 +291,7 @@ class DocPost < Thor
           begin
             new_options = JSON.load(STDIN)
           rescue
-            error "load from STDIN failed. may be invalid JSON"
+            error 'load from STDIN failed. may be invalid JSON'
             exit 1
           end
         end
@@ -362,7 +361,7 @@ class DocPost < Thor
 
     def check_token
       return if load_token.present?
-      error 'token is not registered'
+      error 'token not registered'
       help('set')
       exit 1
     end
@@ -373,7 +372,7 @@ class DocPost < Thor
         begin
           token = File.open(path) { |f| JSON.load(f).with_indifferent_access }
         rescue
-          error "failed to load token"
+          error 'failed to load token'
           exit 1
         end
         return token[:token] if token.present?
@@ -406,15 +405,30 @@ class DocPost < Thor
     end
 
     def upload_file(team, path, name: nil)
-      name ||= File.basename(path)
+      path = Pathname.new(path)
+      name ||= path.basename
+      name = Pathname.new(name)
+      case path.extname
+      when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+        add_text_ext = false
+        uploaded_name = name
+      else
+        say 'suppose file type is plain text'
+        add_text_ext = true
+        ext = name.extname + '.txt'
+        uploaded_name = name.sub_ext(ext)
+      end
       say "reading and uploading: #{path} ... "
       content = nil
       open(path) { |f| content = f.read }
       json = {
-        name:    name,
+        name:    uploaded_name,
         content: Base64.strict_encode64(content)
       }.to_json
       response = post("https://api.docbase.io/teams/#{team}/attachments", json)
+      markdown = JSON.parse(response.body)['markdown']
+      markdown.gsub!(/^\[!\[txt\]\((.+)\)\s(.+)\.txt\]\((.+)\)$/, '[![txt](\1) \2](\3)') if add_text_ext
+      [response, markdown]
     end
 
     def upload_and_substitute_images(team, body, dir)
