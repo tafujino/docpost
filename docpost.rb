@@ -63,6 +63,8 @@ class DocPost < Thor
 
   @options_table = { }.with_indifferent_access
 
+  class_option :mode, enum: %w[force ask reluctant], default: 'ask', aliases: :'-m'
+
   desc 'sub [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
   # option priority: 1. options in JSON 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
@@ -77,7 +79,6 @@ class DocPost < Thor
     { option: :notice,  type: :boolean,                   default: default[:sub][:notice]                  },
     { option: :type,    enum: %w[md Rmd json],                                             loadable: false },
     { option: :type,    enum: %w[md Rmd],                                                  cmdline:  false },
-    { option: :mode,    enum: %w[force ask quit],         default: 'ask'                                   },
     { option: :dry_run, type: :boolean,                   default: false,                  loadable: false },
     { option: :upload,  enum: %w[full standard],          default: default[:sub][:upload]                  },
   ]
