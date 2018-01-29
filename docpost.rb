@@ -223,8 +223,9 @@ class DocPost < Thor
         File.open(path, 'w') do |f|
           f.puts JSON.pretty_generate({ token: token })
         end
+        FileUtils.chmod(0600, path)
       rescue
-        error 'failed to update token'
+        error "failed to update token: #{path}"
         exit 1
       end
       say 'update succeeded'
@@ -289,6 +290,7 @@ class DocPost < Thor
       @conf = DocPost.conf
       @default = DocPost.default
       @options_table = DocPost.options_table
+      check_token_permission
       super(args, options, config)
     end
 
@@ -368,14 +370,26 @@ class DocPost < Thor
       opts
     end
 
-    def check_token
-      return if load_token.present?
-      error 'token not registered'
-      help('set')
-      exit 1
+    def check_token_permission
+      path = @conf[:path][:token]
+      return unless path.present?
+      return unless File.exist?(path)
+      mode = '%o' % File.stat(path).mode
+      permission = mode[-3, 3]
+      unless '600' == permission
+        error "currently token file is set to mode #{permission}"
+        begin
+          FileUtils.chmod(0600, path)
+          say "changed to mode 600: #{path}"
+        rescue
+          error "unable to change permission: #{path}"
+          exit 1
+        end
+      end
     end
 
     def load_token
+      check_token_permission
       path = @conf[:path][:token]
       if path.present? && File.exist?(path)
         begin
@@ -386,7 +400,14 @@ class DocPost < Thor
         end
         return token[:token] if token.present?
       end
-      error "token is not set"
+      error 'token is not set'
+      help('set')
+      exit 1
+    end
+
+    def check_token_existence
+      return if load_token.present?
+      error 'token is empty'
       help('set')
       exit 1
     end
