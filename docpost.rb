@@ -236,21 +236,26 @@ class DocPost < Thor
   def update(arg)
   end
 
-  desc 'upload {FILE,URI}S', 'Upload content to DocBase'
+  desc 'upload [{FILE,URI}S]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
     { option: :teams,            type: :array,   default: default[:upload][:teams]                         },
     { option: :collect_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-c' },
+    { option: :name,             type: :string,  default: ''                              , aliases: :'-n' },
   ]
   eval_options(:upload)
   def upload(*path_list)
     if path_list.empty?
-      help('upload')
-      exit 1
+      h = { content: STDIN.read }
+      h[:name] = options[:name] if options[:name]
+      upload_list = [h]
+    else
+      upload_list = path_list.map { |path| { path: path } }
+      error 'option "--name" is valid only when content is read from STDIN' if options[:name].present? # only warn, not abort
     end
     markdown_list = []
     options[:teams].each do |team|
-      path_list.each do |path|
-        response, markdown = upload_file(team, path)
+      upload_list.each do |h|
+        response, markdown = upload_content(team, **h)
         handle_response_code(response)
         markdown_list.push(markdown)
         say 'markdown: '
@@ -404,23 +409,29 @@ class DocPost < Thor
       request(uri, Net::HTTP::Post, dry_run) { |request| request.body = json }
     end
 
-    def upload_file(team, path, name: nil)
-      path = Pathname.new(path)
-      name ||= path.basename
-      name = Pathname.new(name)
-      case path.extname
-      when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
-        add_text_ext = false
-        uploaded_name = name
-      else
-        say 'suppose file type is plain text'
-        add_text_ext = true
-        ext = name.extname + '.txt'
-        uploaded_name = name.sub_ext(ext)
+    def upload_content(team, path: nil, content: nil, name: nil)
+      unless content
+        unless path
+          error 'fatal error. both path and content are not specified when uploading'
+          exit 1
+        end
+        path = Pathname.new(path)
+        name ||= path.basename
+        say "reading and uploading: #{path} ... "
+        open(path) { |f| content = f.read }
       end
-      say "reading and uploading: #{path} ... "
-      content = nil
-      open(path) { |f| content = f.read }
+      name ||= 'upload_content'
+      name = Pathname.new(name)
+      case name.extname
+        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+          add_text_ext = false
+          uploaded_name = name
+        else
+          say 'suppose file type is plain text'
+          add_text_ext = true
+          ext = name.extname + '.txt'
+          uploaded_name = name.sub_ext(ext)
+      end
       json = {
         name:    uploaded_name,
         content: Base64.strict_encode64(content)
