@@ -39,7 +39,7 @@ class DocPost < Thor
   @docpost_dir = Pathname.new(Dir.home) + '.docpost'
   @conf_path = @docpost_dir + 'conf.json'
   @conf =  { default:
-               { sub:
+               { submit:
                    { teams:  nil,
                      groups: nil,
                      scope:  'private',
@@ -65,32 +65,80 @@ class DocPost < Thor
 
   class_option :mode, enum: %w[force ask reluctant], default: 'ask', aliases: :'-m'
 
-  desc 'sub [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
+  desc 'database {update, clear, status}', 'Update, clear or show status of teams and groups database'
+  def database(arg)
+  end
+
+  desc 'log', 'Show log'
+  def log
+  end
+
+  # for teams retrieval,  see https://help.docbase.io/posts/92977
+  # for groups retrieval, see https://help.docbase.io/posts/92978
+  desc 'print {teams, groups [TEAMS]}', 'Print list of teams or groups'
+  def print(*args)
+    if args.empty?
+      help('print')
+      exit 1
+    end
+    check_token
+    target = args.shift
+    case target
+    when 'teams'
+      response = get('https://api.docbase.io/teams')
+      JSON.parse(response.body).each_with_index do |h, i|
+        puts "domain = #{h['domain']}, name = #{h['name']}"
+      end
+      puts
+      handle_response_code(response)
+      handle_quota(response)
+      puts
+    when 'groups'
+      teams = args.empty? ? @default[:print][:groups][:teams] : args
+      unless teams
+        error 'no team is specified'
+        exit 1
+      end
+      teams.each do |team|
+        puts "team: #{team}"
+        response = get("https://api.docbase.io/teams/#{team}/groups")
+        JSON.parse(response.body).each_with_index do |h, i|
+          puts "id = #{h['id']}, name = #{h['name']}"
+        end
+        puts
+        handle_response_code(response)
+        handle_quota(response)
+        puts
+      end
+    end
+  end
+
+  desc 'submit [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
   # option priority: 1. options in JSON 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
-  @options_table[:sub] = [
-    { option: :teams,   type: :array,                     default: default[:sub][:teams]                   },
-    { option: :title,   type: :string,                    default: ''                                      },
-    { option: :body,    type: :string,                                                     cmdline:  false },
-    { option: :tags,    type: :array,                     default: default[:sub][:tag]                     },
-    { option: :groups,  type: :array,                     default: default[:sub][:groups]                  },
-    { option: :draft,   type: :boolean,                   default: default[:sub][:draft]                   },
-    { option: :scope,   enum: %w[everyone group private], default: default[:sub][:scope]                   },
-    { option: :notice,  type: :boolean,                   default: default[:sub][:notice]                  },
-    { option: :type,    enum: %w[md Rmd json],                                             loadable: false },
-    { option: :type,    enum: %w[md Rmd],                                                  cmdline:  false },
-    { option: :dry_run, type: :boolean,                   default: false,                  loadable: false },
-    { option: :upload,  enum: %w[full standard],          default: default[:sub][:upload]                  },
+  @options_table[:submit] = [
+    { option: :teams,   type: :array,                     default: default[:submit][:teams]                   },
+    { option: :title,   type: :string,                    default: ''                                         },
+    { option: :body,    type: :string,                                                        cmdline:  false },
+    { option: :tags,    type: :array,                     default: default[:submit][:tag]                     },
+    { option: :groups,  type: :array,                     default: default[:submit][:groups]                  },
+    { option: :draft,   type: :boolean,                   default: default[:submit][:draft]                   },
+    { option: :scope,   enum: %w[everyone group private], default: default[:submit][:scope]                   },
+    { option: :notice,  type: :boolean,                   default: default[:submit][:notice]                  },
+    { option: :type,    enum: %w[md Rmd json],                                                loadable: false },
+    { option: :type,    enum: %w[md Rmd],                                                     cmdline:  false },
+    { option: :dry_run, type: :boolean,                   default: false,                     loadable: false },
+    { option: :upload,  enum: %w[full standard],          default: default[:submit][:upload]                  },
   ]
-  eval_options(:sub)
-  def sub(path = nil)
+  eval_options(:submit)
+  def submit(path = nil)
     check_token
     path, opts = sub_get_options(path, options)
 
     check_title = proc do 
       if opts[:title].blank?
         error 'title is missing'
-        help('sub')
+        help('submit')
         exit 1
       end
     end
@@ -132,12 +180,12 @@ class DocPost < Thor
     end
     if 'group' != opts[:scope] && opts[:groups]
       error 'option "scope" should be "group" when group(s) are specified'
-      help('sub')
+      help('submit')
       exit 1
     end
     if 'group' == opts[:scope] && (!opts[:groups] || opts[:groups].empty?)
       error 'should specify group(s) when scope is "group"'
-      help('sub')
+      help('submit')
       exit 1
     end
 
@@ -161,78 +209,36 @@ class DocPost < Thor
     end
   end
 
-  # for teams retrieval,  see https://help.docbase.io/posts/92977
-  # for groups retrieval, see https://help.docbase.io/posts/92978
-  desc 'print {teams, groups [TEAMS]}', 'Print list of teams/groups'
-  def print(*args)
-    if args.empty?
-      help('print')
-      exit 1
-    end
-    check_token
-    target = args.shift
-    case target
-    when 'teams'
-      response = get('https://api.docbase.io/teams')
-      JSON.parse(response.body).each_with_index do |h, i|
-        puts "domain = #{h['domain']}, name = #{h['name']}"
-      end
-      puts
-      handle_response_code(response)
-      handle_quota(response)
-      puts
-    when 'groups'
-      teams = args.empty? ? @default[:print][:groups][:teams] : args
-      unless teams
-        error 'no team is specified'
+  desc 'token {set, clear, status}', 'Set, clear or show status of token'
+  def token(arg)
+    case arg
+    when 'set'
+      token = ask('type new token:', :echo => false)
+      if token.blank?
+        error 'invalid token'
         exit 1
       end
-      teams.each do |team|
-        puts "team: #{team}"
-        response = get("https://api.docbase.io/teams/#{team}/groups")
-        JSON.parse(response.body).each_with_index do |h, i|
-          puts "id = #{h['id']}, name = #{h['name']}"
+      path = @conf[:path][:token]
+      begin
+        File.open(path, 'w') do |f|
+          f.puts JSON.pretty_generate({ token: token })
         end
-        puts
-        handle_response_code(response)
-        handle_quota(response)
-        puts
+      rescue
+        error 'failed to update token'
+        exit 1
       end
+      say 'update succeeded'
+    when 'clear'
+      path = @conf[:path][:token]
+      FileUtils.rm(path) if File.exist?(path)
+    when 'status'
+    #
+    else
+      help('token')
+      exit 1
     end
   end
 
-  desc 'set token', 'Set token'
-  def set(arg)
-    unless 'token' == arg
-      help('set')
-      exit 1
-    end
-    token = ask('type new token:', :echo => false)
-    if token.blank?
-      error 'invalid token'
-      exit 1
-    end
-    path = @conf[:path][:token]
-    begin
-      File.open(path, 'w') do |f|
-        f.puts JSON.pretty_generate({ token: token })
-      end
-    rescue
-      error 'failed to update token'
-      exit 1
-    end
-    say 'update succeeded'
-  end
-
-  desc 'remove token', 'Remove token'
-  def remove(arg)
-    path = @conf[:path][:token]
-    FileUtils.rm(path) if File.exist?(path)
-  end
-
-  desc 'update database', 'Update teams and groups database'
-  def update(arg)
-  end
 
   desc 'upload [{FILE,URI}S]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
@@ -289,7 +295,7 @@ class DocPost < Thor
     def sub_get_options(path, options)
       if 'json' == options[:type] || (!options[:type] && path && File.extname(path) =~ /^\.json$/i)
         if path
-          new_options = load_options_json(:sub, path)
+          new_options = load_options_json(:submit, path)
         else
           begin
             new_options = JSON.load(STDIN)
