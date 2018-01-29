@@ -133,7 +133,7 @@ class DocPost < Thor
   eval_options(:submit)
   def submit(path = nil)
     check_token_existence
-    path, opts = sub_get_options(path, options)
+    path, opts = submit_get_options(path, options)
 
     check_title = proc do 
       if opts[:title].blank?
@@ -294,7 +294,7 @@ class DocPost < Thor
       super(args, options, config)
     end
 
-    def sub_get_options(path, options)
+    def submit_get_options(path, options)
       if 'json' == options[:type] || (!options[:type] && path && File.extname(path) =~ /^\.json$/i)
         if path
           new_options = load_options_json(:submit, path)
