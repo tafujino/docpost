@@ -135,49 +135,6 @@ class DocPost < Thor
     check_token_existence
     path, opts = submit_get_options(path, options)
 
-    check_title = proc do 
-      if opts[:title].blank?
-        error 'title is missing'
-        help('submit')
-        exit 1
-      end
-    end
-
-    if path
-      dir = File.dirname(path)
-      unless File.exist?(path)
-        error "file not exist: #{path}"
-        exit 1
-      end
-      body = File.read(path)
-      unless opts[:type]
-        ext = File.extname(path)
-        case ext
-        when /^\.md$/i
-          file_type = 'md'
-          check_title.call
-        when /^\.Rmd$/i
-          file_type = 'Rmd'
-        else
-          error "cannot determine file type: #{path}"
-          exit 1
-        end
-      end
-    else
-      dir = Dir.pwd
-      case opts[:type]
-      when 'Rmd'
-        body = STDIN.read
-      when 'md'
-        check_title.call
-        body = STDIN.read
-      else
-        check_title.call
-        body = STDIN.read
-        say 'suppose file type is Markdown'
-        file_type = 'md'
-      end
-    end
     if 'group' != opts[:scope] && opts[:groups]
       error 'option "scope" should be "group" when group(s) are specified'
       help('submit')
@@ -188,6 +145,9 @@ class DocPost < Thor
       help('submit')
       exit 1
     end
+
+    body, dir, file_type = submit_get_body(path, opts[:type], opts[:title])
+    # body = compile_body(body) if 'Rmd' == file_type
 
     opts[:teams].each do |team|
       body = upload_and_substitute_images(team, body, dir)
@@ -201,7 +161,7 @@ class DocPost < Thor
         notice: opts[:notice],
       }.compact.to_json
 
-      say 'submitting' + (path ? ": #{path}" : '')
+      say 'submitting' + (path ? ": #{path}" : '') + ' ... '
       response = post("https://api.docbase.io/teams/#{team}/posts", json)
       handle_response_code(response)
       handle_quota(response)
@@ -325,6 +285,53 @@ class DocPost < Thor
         new_options = options
       end
       [new_path, new_options]
+    end
+
+    def submit_get_body(path, opt_type, opt_title)
+      check_title = proc do 
+        if opt_title.blank?
+          error 'title is missing'
+          help('submit')
+          exit 1
+        end
+      end
+
+      if path
+        dir = File.dirname(path)
+        unless File.exist?(path)
+          error "file not exist: #{path}"
+          exit 1
+        end
+        body = File.read(path)
+        unless opt_type
+          ext = File.extname(path)
+          case ext
+          when /^\.md$/i
+            file_type = 'md'
+            check_title.call
+          when /^\.Rmd$/i
+            file_type = 'Rmd'
+          else
+            error "cannot determine file type: #{path}"
+            exit 1
+        end
+        end
+      else
+        dir = Dir.pwd
+        case opt_type
+        when 'Rmd'
+          body = STDIN.read
+        when 'md'
+          check_title.call
+          body = STDIN.read
+        else
+          check_title.call
+          body = STDIN.read
+          say 'suppose file type is Markdown'
+          file_type = 'md'
+        end
+      end
+      [body, dir, file_type]
     end
 
     def load_options_json(cmd, path)
@@ -500,9 +507,9 @@ class DocPost < Thor
           exit 1
         end
         next unless should_upload
-        response = upload(team, path)
+        response, markdown = upload_content(team, path: path)
         say "done (remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']})"
-        body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, JSON.parse(response.body)['markdown'])
+        body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, markdown)
       end
       body
     end
