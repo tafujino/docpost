@@ -87,12 +87,12 @@ class DocPost < Thor
     when 'teams'
       response = get('https://api.docbase.io/teams')
       JSON.parse(response.body).each_with_index do |h, i|
-        puts "domain = #{h['domain']}, name = #{h['name']}"
+        say "domain = #{h['domain']}, name = #{h['name']}"
       end
-      puts
+      say
       handle_response_code(response)
       handle_quota(response)
-      puts
+      say
     when 'groups'
       teams = args.empty? ? @default[:print][:groups][:teams] : args
       unless teams
@@ -100,15 +100,15 @@ class DocPost < Thor
         exit 1
       end
       teams.each do |team|
-        puts "team: #{team}"
+        say "team: #{team}"
         response = get("https://api.docbase.io/teams/#{team}/groups")
         JSON.parse(response.body).each_with_index do |h, i|
-          puts "id = #{h['id']}, name = #{h['name']}"
+          say "id = #{h['id']}, name = #{h['name']}"
         end
-        puts
+        say
         handle_response_code(response)
         handle_quota(response)
-        puts
+        say
       end
     end
   end
@@ -205,7 +205,7 @@ class DocPost < Thor
       response = post("https://api.docbase.io/teams/#{team}/posts", json)
       handle_response_code(response)
       handle_quota(response)
-      puts
+      say
     end
   end
 
@@ -233,7 +233,19 @@ class DocPost < Thor
       path = @conf[:path][:token]
       FileUtils.rm(path) if File.exist?(path)
     when 'status'
-    #
+      check_token_permission
+      path = @conf[:path][:token]
+      if path.present? && File.exist?(path)
+        begin
+          File.open(path) { |f| JSON.load(f) }
+          say 'token is registered'
+        rescue
+          say 'token file may be invalid'
+        end
+      else
+        say 'token is not registered'
+      end
+      say
     else
       help('token')
       exit 1
@@ -266,7 +278,7 @@ class DocPost < Thor
         say 'markdown: '
         say markdown, :green
         handle_quota(response)
-        puts
+        say
       end
     end
     say 'all files uploaded'
@@ -281,7 +293,7 @@ class DocPost < Thor
 
   desc 'version', 'Show version'
   def version
-    puts '0.1'
+    say '0.1'
   end
 
   no_commands do
