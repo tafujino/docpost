@@ -6,12 +6,13 @@ require 'net/http'
 require 'uri'
 require 'open-uri'
 require 'json'
+require 'yaml'
 require 'fileutils'
 require 'pathname'
 require 'active_support'
 require 'active_support/core_ext'
 
-MAX_CHAR_NUM = 50000
+MAX_CHAR_NUM   = 50000
 ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
 
 class DocPost < Thor
@@ -21,7 +22,7 @@ class DocPost < Thor
     private
 
     def load_config(path)
-      conf = File.exist?(path) ? File.open(path) { |f| JSON.load(f) } : { }
+      conf = File.exist?(path) ? YAML.load_file(path) : { }
       conf.with_indifferent_access
     end
 
@@ -37,27 +38,28 @@ class DocPost < Thor
   end
 
   @docpost_dir = Pathname.new(Dir.home) + '.docpost'
-  @conf_path = @docpost_dir + 'conf.json'
-  @conf =  { default:
-               { submit:
-                   { teams:  nil,
-                     groups: nil,
-                     scope:  'private',
-                     tags:   [],
-                     draft:  false,
-                     notice: true,
-                     upload: 'standard',
-                   },
-                 upload:
-                   { list_markdown: false,
-                   }
-               },
-             path:
-               { R:     nil,
-                 token: @docpost_dir + 'token.json',
-               },
-           }.with_indifferent_access
-  # should forbid to load keys undefined in the above
+  @conf_path = @docpost_dir + 'conf.yaml'
+  @conf = { default:
+              { submit:
+                  { teams:  nil,
+                    groups: nil,
+                    scope:  'private',
+                    tags:   [],
+                    draft:  false,
+                    notice: true,
+                    upload: 'standard',
+                  },
+                upload:
+                  { collect_markdown: false,
+                  }
+              },
+            path:
+              { R:     nil,
+                token: @docpost_dir + 'token.yaml',
+              }
+          }.with_indifferent_access
+
+  # should forbid from loading keys undefined in the above
   @conf.deep_merge!(load_config(@conf_path))
   @default = @conf[:default]
 
@@ -75,7 +77,7 @@ class DocPost < Thor
 
   # for teams retrieval,  see https://help.docbase.io/posts/92977
   # for groups retrieval, see https://help.docbase.io/posts/92978
-  desc 'print {teams, groups [TEAMS]}', 'Print list of teams or groups'
+  desc 'print {teams, groups [TEAM ...]}', 'Print list of teams or groups'
   def print(*args)
     if args.empty?
       help('print')
@@ -115,7 +117,7 @@ class DocPost < Thor
 
   desc 'submit [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
-  # option priority: 1. options in JSON 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
+  # option priority: 1. options in YAML 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
   @options_table[:submit] = [
     { option: :teams,   type: :array,                     default: default[:submit][:teams]                   },
     { option: :title,   type: :string,                    default: ''                                         },
@@ -125,7 +127,7 @@ class DocPost < Thor
     { option: :draft,   type: :boolean,                   default: default[:submit][:draft]                   },
     { option: :scope,   enum: %w[everyone group private], default: default[:submit][:scope]                   },
     { option: :notice,  type: :boolean,                   default: default[:submit][:notice]                  },
-    { option: :type,    enum: %w[md Rmd json],                                                loadable: false },
+    { option: :type,    enum: %w[md Rmd yaml],                                                loadable: false },
     { option: :type,    enum: %w[md Rmd],                                                     cmdline:  false },
     { option: :dry_run, type: :boolean,                   default: false,                     loadable: false },
     { option: :upload,  enum: %w[full standard],          default: default[:submit][:upload]                  },
@@ -181,7 +183,7 @@ class DocPost < Thor
       path = @conf[:path][:token]
       begin
         File.open(path, 'w') do |f|
-          f.puts JSON.pretty_generate({ token: token })
+          f.puts YAML.dump(token: token)
         end
         FileUtils.chmod(0600, path)
       rescue
@@ -197,7 +199,7 @@ class DocPost < Thor
       path = @conf[:path][:token]
       if path.present? && File.exist?(path)
         begin
-          File.open(path) { |f| JSON.load(f) }
+          YAML.load_file(path)
           say 'token is registered'
         rescue
           say 'token file may be invalid'
@@ -267,14 +269,14 @@ class DocPost < Thor
     end
 
     def submit_get_options(path, options)
-      if 'json' == options[:type] || (!options[:type] && path && File.extname(path) =~ /^\.json$/i)
+      if 'yaml' == options[:type] || (!options[:type] && path && File.extname(path) =~ /^\.ya?ml$/i)
         if path
-          new_options = load_options_json(:submit, path)
+          new_options = load_options_yaml(:submit, path)
         else
           begin
-            new_options = JSON.load(STDIN)
+            new_options = YAML.load(STDIN)
           rescue
-            error 'load from STDIN failed. may be invalid JSON'
+            error 'load from STDIN failed. may be invalid YAML'
             exit 1
           end
         end
@@ -334,15 +336,15 @@ class DocPost < Thor
       [body, dir, file_type]
     end
 
-    def load_options_json(cmd, path)
+    def load_options_yaml(cmd, path)
       unless File.exist?(path)
         error "file not exist: #{path}"
         exit 1
       end
       begin
-        opts = File.open(path) { |f| JSON.load(f).with_indifferent_access }
+        opts = YAML.load_file(path).with_indifferent_access
       rescue
-        error "load failed. may be invalid JSON: #{path}"
+        error "load failed. may be invalid YAML: #{path}"
         exit 1
       end
       unless opts.key?(:body)
@@ -363,7 +365,7 @@ class DocPost < Thor
           exit 1
         end
         if h.key?(:type)
-          type_to_class = { boolen:  [TrueClass, FalseClass],
+          type_to_class = { boolean: [TrueClass, FalseClass],
                             string:  [String],
                             numeric: [Numeric],
                             array:   [Array],
@@ -377,7 +379,7 @@ class DocPost < Thor
             exit 1
           end
         elsif h.key?(:enum)
-          unless h[:enum].instance_of?(Array) && h[:enum].include?(option_from_file[key])
+          unless h[:enum].include?(value)
             error "the value of \"#{key}\" should be #{h[:enum].to_s}}"
             exit 1
           end
@@ -412,7 +414,7 @@ class DocPost < Thor
       path = @conf[:path][:token]
       if path.present? && File.exist?(path)
         begin
-          token = File.open(path) { |f| JSON.load(f).with_indifferent_access }
+          token = YAML.load_file(path).with_indifferent_access
         rescue
           error 'failed to load token'
           exit 1
