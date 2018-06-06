@@ -11,8 +11,8 @@ require 'pathname'
 require 'active_support'
 require 'active_support/core_ext'
 
-MaxCharNum = 50000
-AlertCharNum = MaxCharNum - 100
+MAX_CHAR_NUM = 50000
+ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
 
 class DocPost < Thor
   class << self
@@ -213,7 +213,7 @@ class DocPost < Thor
   end
 
 
-  desc 'upload [{FILE,URI}S]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
+  desc 'upload [{FILE,URI} ...]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
     { option: :teams,            type: :array,   default: default[:upload][:teams]                         },
     { option: :collect_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-c' },
@@ -327,7 +327,7 @@ class DocPost < Thor
         else
           check_title.call
           body = STDIN.read
-          say 'suppose file type is Markdown'
+          say 'supposing file type is Markdown ... '
           file_type = 'md'
         end
       end
@@ -471,7 +471,7 @@ class DocPost < Thor
           add_text_ext = false
           uploaded_name = name
         else
-          say 'suppose file type is plain text'
+          say 'supposing file type is plain text ... '
           add_text_ext = true
           ext = name.extname + '.txt'
           uploaded_name = name.sub_ext(ext)
