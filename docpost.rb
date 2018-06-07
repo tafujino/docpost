@@ -112,6 +112,9 @@ class DocPost < Thor
         handle_quota(response)
         say
       end
+    else
+      help('print')
+      exit 1
     end
   end
 
