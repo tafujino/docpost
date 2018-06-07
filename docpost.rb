@@ -189,10 +189,17 @@ class DocPost < Thor
         notice: opts[:notice],
       }.compact.to_json
 
+      if opts[:dry_run]
+        say '(dry_run) '
+      end
       say 'submitting' + (path ? ": #{path}" : '') + ' ... '
-      response = post("https://api.docbase.io/teams/#{team}/posts", json)
-      handle_response_code(response)
-      handle_quota(response)
+      response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
+      if opts[:dry_run]
+        say
+      else
+        handle_response_code(response)
+        handle_quota(response)
+      end
       say
     end
   end
