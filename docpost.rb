@@ -153,7 +153,7 @@ class DocPost < Thor
     YAML.dump(db.to_hash, File.open(@path[:database], 'w'))
   end
 
-  desc 'submit [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
+  desc 'submit [FILE] [options]', 'Submit (R)markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
   # option priority: 1. options in YAML 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
   @options_table[:submit] = [
@@ -273,7 +273,7 @@ class DocPost < Thor
 
   desc 'upload [{FILE,URI} ...]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
-    { option: :teams,            type: :array,   default: default[:upload][:teams]                         },
+    { option: :teams,            type: :array,   default: default[:upload][:teams]                            },
     { option: :collect_markdown, type: :boolean, default: default[:upload][:collect_markdown], aliases: :'-c' },
     { option: :name,             type: :string,  default: ''                                 , aliases: :'-n' },
   ]
@@ -288,6 +288,10 @@ class DocPost < Thor
       error 'option "--name" is valid only when content is read from STDIN' if options[:name].present? # only warn, not abort
     end
     markdown_list = []
+    if !options[:teams] || options[:teams].empty?
+      error "no team is specified"
+      exit 1
+    end
     options[:teams].each do |team|
       upload_list.each do |h|
         response, markdown = upload_content(team, **h)
@@ -439,7 +443,9 @@ class DocPost < Thor
           error "invalid key \"#{key}\" in #{path}"
           exit 1
         end
-        a = @options_table[cmd].select { |h| key == h[:option].to_s && !(h[:loadable] && false == h[:loadable]) }
+        a = @options_table[cmd].select do |h|
+          key == h[:option].to_s && !(h[:loadable] && false == h[:loadable])
+        end
         error_invalid_key.call if a.empty?
         h = a.shift
         unless a.empty?
@@ -546,7 +552,7 @@ class DocPost < Thor
         path = Pathname.new(path)
         name ||= path.basename
         say "reading and uploading: #{path} ... "
-        open(path) { |f| content = f.read }
+        open(path.to_s) { |f| content = f.read }
       end
       name ||= 'upload_content'
       name = Pathname.new(name)
@@ -580,7 +586,7 @@ class DocPost < Thor
         should_upload = false
         case uri
         when URI::HTTP, URI::HTTPS
-          should_upload = true if 'all' == options[:upload]
+          should_upload = true if 'full' == options[:upload]
         when URI::FTP
           should_upload = true
         when URI::Generic
