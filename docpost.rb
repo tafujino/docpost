@@ -331,7 +331,13 @@ class DocPost < Thor
 
     def init_groups_name
       # should check default value for groups contains only groups name or numbers
-      @groups_name = DocPost.conf[:groups_name].map { |k, v| [k, v.instance_of?(Array) ? v : [v]] }.to_h.with_indifferent_access
+      if DocPost.conf.key?(:groups_name)
+        @groups_name = DocPost.conf[:groups_name].map do |k, v|
+          [k, v.instance_of?(Array) ? v : [v]]
+        end.to_h.with_indifferent_access
+      else
+        @groups_name = { }
+      end
       @groups_dict = { }
       @groups_name.each do |k, v|
         v.each do |name|
