@@ -203,7 +203,13 @@ class DocPost < Thor
     end
 
     opts[:teams].each do |team|
-      body = upload_and_substitute_images(team, body, dir)
+      if body.size >= ALERT_CHAR_NUM
+        ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
+      end
+      body = upload_and_substitute_images(team, body, dir, dry_run: opts[:dry_run])
+      if body.size >= MAX_CHAR_NUM
+        ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
+      end
       json = {
         title:  opts[:title],
         body:   body,
@@ -214,13 +220,11 @@ class DocPost < Thor
         notice: opts[:notice],
       }.compact.to_json
 
-      if opts[:dry_run]
-        say '(dry_run) '
-      end
+      say '(dry_run) ' if opts[:dry_run]
       say 'submitting' + (path ? ": #{path}" : '') + ' ... '
       response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
       if opts[:dry_run]
-        say
+        say " uploaded"
       else
         handle_response_code(response)
         handle_quota(response)
@@ -543,7 +547,7 @@ class DocPost < Thor
       request(uri, Net::HTTP::Post, dry_run) { |request| request.body = json }
     end
 
-    def upload_content(team, path: nil, content: nil, name: nil)
+    def upload_content(team, path: nil, content: nil, name: nil, dry_run: true)
       unless content
         unless path
           error 'fatal error. both path and content are not specified when uploading'
@@ -551,6 +555,7 @@ class DocPost < Thor
         end
         path = Pathname.new(path)
         name ||= path.basename
+        say '(dry_run) ' if dry_run
         say "reading and uploading: #{path} ... "
         open(path.to_s) { |f| content = f.read }
       end
@@ -566,6 +571,7 @@ class DocPost < Thor
           ext = name.extname + '.txt'
           uploaded_name = name.sub_ext(ext)
       end
+      return nil if dry_run
       json = {
         name:    uploaded_name,
         content: Base64.strict_encode64(content)
@@ -576,11 +582,16 @@ class DocPost < Thor
       [response, markdown]
     end
 
-    def upload_and_substitute_images(team, body, dir)
+    def upload_and_substitute_images(team, body, dir, dry_run: false)
       body = body.clone
-      # to do: normalize path
       paths = body.scan(/!\[[^\[\]]*\]\(([^\(\)]*)\)/).flatten.uniq
+      n = paths.size
+      remaining_limit = nil
       paths.each do |path|
+        if remaining_limit && n > remaining_limit
+          ask_continue("the number of contents is greater than the number of remaining quota.")
+        end
+
         original_path = path.clone
         uri = URI.parse(path)
         should_upload = false
@@ -597,9 +608,15 @@ class DocPost < Thor
           exit 1
         end
         next unless should_upload
-        response, markdown = upload_content(team, path: path)
-        say "done (remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']})"
-        body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, markdown)
+        response, markdown = upload_content(team, path: path, dry_run: dry_run)
+        unless dry_run
+          remaining_limit = response['x-ratelimit-remaining'].to_i
+          say "uploaded (remaining quota: #{remaining_limit}/#{response['x-ratelimit-limit']})"
+          body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, markdown)
+        else
+          say "uploaded"
+        end
+        n -= 1
       end
       body
     end
@@ -608,9 +625,9 @@ class DocPost < Thor
       case response.code.to_i
       when 200
       when 201
-        say 'successfully uploaded'
+        say 'uploaded'
       when 204
-        say 'successfully removed'
+        say 'removed'
       when 400
         error 'invalid request'
         exit 1
@@ -633,6 +650,24 @@ class DocPost < Thor
     def handle_quota(response)
       say "remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']}, "
       say "to be reset at: #{Time.at(response['x-ratelimit-reset'].to_i)}"
+    end
+
+    def ask_continue(msg)
+      case options[:mode]
+      when 'force'
+        should_continue = true
+      when 'ask'
+        should_continue = yes?(msg + ' continue?')
+      when 'reluctant'
+        should_continue = false
+      else
+        error "invalid mode: #{mode}"
+        exit 1
+      end
+      unless should_continue
+        error 'aborted'
+        exit 1
+      end
     end
 
   end
