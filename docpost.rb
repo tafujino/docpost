@@ -17,7 +17,7 @@ ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
 
 class DocPost < Thor
   class << self
-    attr_reader :conf_path, :default, :groups_name, :options_table, :path
+    attr_reader :conf, :default, :options_table, :path
 
     private
 
@@ -38,7 +38,6 @@ class DocPost < Thor
   end
 
   @docpost_dir = Pathname.new(Dir.home) + '.docpost'
-  @conf_path = @docpost_dir + 'conf.yaml'
   @conf = { default:
               { submit:
                   { teams:  nil,
@@ -58,16 +57,16 @@ class DocPost < Thor
                   { }
               },
             path:
-              { R:     nil,
-                token: @docpost_dir + 'token.yaml',
+              { conf:     @docpost_dir + 'conf.yaml',
+                R:        nil,
+                token:    @docpost_dir + 'token.yaml',
+                database: @docpost_dir + 'database.yaml',
               }
           }.with_indifferent_access
 
   # should forbid from loading keys undefined in the above
-  @conf.deep_merge!(load_config(@conf_path))
+  @conf.deep_merge!(load_config(conf[:path][:conf]))
   @default = @conf[:default]
-  @groups_name = @conf[:groups][:name]
-  @path = @conf[:path]
   @options_table = { }.with_indifferent_access
 
   class_option :mode, enum: %w[force ask reluctant], default: 'ask', aliases: :'-m'
@@ -213,7 +212,7 @@ class DocPost < Thor
         error 'invalid token'
         exit 1
       end
-      path = @conf[:path][:token]
+      path = @path[:token]
       begin
         File.open(path, 'w') do |f|
           f.puts YAML.dump(token: token)
@@ -225,11 +224,11 @@ class DocPost < Thor
       end
       say 'update succeeded'
     when 'clear'
-      path = @conf[:path][:token]
+      path = @path[:token]
       FileUtils.rm(path) if File.exist?(path)
     when 'status'
       check_token_permission
-      path = @conf[:path][:token]
+      path = @path[:token]
       if path.present? && File.exist?(path)
         begin
           YAML.load_file(path)
@@ -246,7 +245,6 @@ class DocPost < Thor
       exit 1
     end
   end
-
 
   desc 'upload [{FILE,URI} ...]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
@@ -294,22 +292,23 @@ class DocPost < Thor
   no_commands do
 
     def initialize(args = [], options = { }, config = { })
+      @conf = DocPost.conf
+      @path = @conf[:path]
       @default = DocPost.default
       init_groups_name
-      @path = DocPost.path
       @options_table = DocPost.options_table
       check_token_permission
       super(args, options, config)
     end
 
     def config_file_error(msg)
-      error msg + "\nmodify #{DocPost.conf_path}"
+      error msg + "\nmodify #{@path[:conf]}"
       exit 1
     end
 
     def init_groups_name
       # should check default value for groups contains only groups name or numbers
-      @groups_name = DocPost.groups_name.map { |k, v| [k, v.instance_of?(Array) ? v : [v]] }.to_h.with_indifferent_access
+      @groups_name = DocPost.conf[:groups_name].map { |k, v| [k, v.instance_of?(Array) ? v : [v]] }.to_h.with_indifferent_access
       @groups_dict = { }
       @groups_name.each do |k, v|
         v.each do |name|
@@ -342,7 +341,7 @@ class DocPost < Thor
     end
 
     def submit_get_body(path, opt_type, opt_title)
-      check_title = proc do 
+      check_title = proc do
         if opt_title.blank?
           error 'title is missing'
           help('submit')
@@ -604,4 +603,3 @@ end
 if $PROGRAM_NAME == __FILE__
   DocPost.start(ARGV)
 end
-
