@@ -149,6 +149,7 @@ class DocPost < Thor
       help('print')
       exit 1
     end
+    FileUtils.mkpath(File.dirname(@path[:database]))
     YAML.dump(db.to_hash, File.open(@path[:database], 'w'))
   end
 
@@ -239,6 +240,7 @@ class DocPost < Thor
       end
       path = @path[:token]
       begin
+        FileUtils.mkpath(File.dirname(path))
         YAML.dump({ token: token }, File.open(path, 'w'))
         FileUtils.chmod(0600, path)
       rescue
