@@ -17,7 +17,7 @@ ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
 
 class DocPost < Thor
   class << self
-    attr_reader :conf, :default, :options_table
+    attr_reader :conf_path, :default, :groups_name, :options_table, :path
 
     private
 
@@ -53,6 +53,10 @@ class DocPost < Thor
                   { collect_markdown: false,
                   }
               },
+            groups:
+              { name:
+                  { }
+              },
             path:
               { R:     nil,
                 token: @docpost_dir + 'token.yaml',
@@ -62,7 +66,8 @@ class DocPost < Thor
   # should forbid from loading keys undefined in the above
   @conf.deep_merge!(load_config(@conf_path))
   @default = @conf[:default]
-
+  @groups_name = @conf[:groups][:name]
+  @path = @conf[:path]
   @options_table = { }.with_indifferent_access
 
   class_option :mode, enum: %w[force ask reluctant], default: 'ask', aliases: :'-m'
@@ -104,8 +109,13 @@ class DocPost < Thor
       teams.each do |team|
         say "team: #{team}"
         response = get("https://api.docbase.io/teams/#{team}/groups")
-        JSON.parse(response.body).each_with_index do |h, i|
-          say "id = #{h['id']}, name = #{h['name']}"
+        text_list = JSON.parse(response.body).map do |h|
+          names = @groups_name[h['id']]
+          [h['id'].to_s + (names ? " (#{names.join(', ')})" : ''), h['name']]
+        end
+        label_len = text_list.map(&:first).map(&:size).max
+        text_list.each do |label, desc|
+          say label + ' ' * (label_len - label.size) + ' : ' + desc
         end
         say
         handle_response_code(response)
@@ -153,6 +163,19 @@ class DocPost < Thor
 
     body, dir, file_type = submit_get_body(path, opts[:type], opts[:title])
     # body = compile_body(body) if 'Rmd' == file_type
+
+    opts[:groups].map! do |group|
+      if group.instance_of?(Integer)
+        group
+      else
+        v = @groups_dict[group]
+        unless v
+          error "cannot find group: #{group}"
+          exit 1
+        end
+        v
+      end
+    end
 
     opts[:teams].each do |team|
       body = upload_and_substitute_images(team, body, dir)
@@ -264,11 +287,30 @@ class DocPost < Thor
   no_commands do
 
     def initialize(args = [], options = { }, config = { })
-      @conf = DocPost.conf
       @default = DocPost.default
+      init_groups_name
+      @path = DocPost.path
       @options_table = DocPost.options_table
       check_token_permission
       super(args, options, config)
+    end
+
+    def config_file_error(msg)
+      error msg + "\nmodify #{DocPost.conf_path}"
+      exit 1
+    end
+
+    def init_groups_name
+      # should check default value for groups contains only groups name or numbers
+      @groups_name = DocPost.groups_name.map { |k, v| [k, v.instance_of?(Array) ? v : [v]] }.to_h.with_indifferent_access
+      @groups_dict = { }
+      @groups_name.each do |k, v|
+        v.each do |name|
+          config_file_error "group names cannot begin with a number: \"#{name}\"" if name =~ /^\d/
+          config_file_error "group name is duplicate: \"#{name}\"" if @groups_dict.key?(name)
+          @groups_dict[name] = k
+        end
+      end
     end
 
     def submit_get_options(path, options)
@@ -395,7 +437,7 @@ class DocPost < Thor
     end
 
     def check_token_permission
-      path = @conf[:path][:token]
+      path = @path[:token]
       return unless path.present?
       return unless File.exist?(path)
       mode = '%o' % File.stat(path).mode
@@ -414,7 +456,7 @@ class DocPost < Thor
 
     def load_token
       check_token_permission
-      path = @conf[:path][:token]
+      path = @path[:token]
       if path.present? && File.exist?(path)
         begin
           token = YAML.load_file(path).with_indifferent_access
