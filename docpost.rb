@@ -206,7 +206,7 @@ class DocPost < Thor
       if body.size >= ALERT_CHAR_NUM
         ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
       end
-      body = upload_and_substitute_images(team, body, dir, dry_run: opts[:dry_run])
+      body = upload_and_substitute_contents(team, body, dir, dry_run: opts[:dry_run])
       if body.size >= MAX_CHAR_NUM
         ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
       end
@@ -547,7 +547,7 @@ class DocPost < Thor
       request(uri, Net::HTTP::Post, dry_run) { |request| request.body = json }
     end
 
-    def upload_content(team, path: nil, content: nil, name: nil, dry_run: true)
+    def upload_content(team, path: nil, content: nil, name: nil, dry_run: false)
       unless content
         unless path
           error 'fatal error. both path and content are not specified when uploading'
@@ -582,12 +582,14 @@ class DocPost < Thor
       [response, markdown]
     end
 
-    def upload_and_substitute_images(team, body, dir, dry_run: false)
+    def upload_and_substitute_contents(team, body, dir, dry_run: false)
       body = body.clone
-      paths = body.scan(/!\[[^\[\]]*\]\(([^\(\)]*)\)/).flatten.uniq
-      n = paths.size
+      contents = body.scan(/\!?\[([^\[\]]*)\]\(([^\(\)]*)\)/).group_by(&:last).map do |k, v|
+        [k, v.map(&:first)]
+      end.to_h
+      n = contents.size
       remaining_limit = nil
-      paths.each do |path|
+      contents.each do |path, labels|
         if remaining_limit && n > remaining_limit
           ask_continue("the number of contents is greater than the number of remaining quota.")
         end
@@ -604,7 +606,7 @@ class DocPost < Thor
           should_upload = true
           path = File.expand_path(path, dir)
         else
-          error "cannot upload the following image: #{path}"
+          error "cannot upload the following content: #{path}"
           exit 1
         end
         next unless should_upload
@@ -612,7 +614,12 @@ class DocPost < Thor
         unless dry_run
           remaining_limit = response['x-ratelimit-remaining'].to_i
           say "uploaded (remaining quota: #{remaining_limit}/#{response['x-ratelimit-limit']})"
-          body.gsub!(/!\[([^\[\]]*)\]\(#{original_path}\)/, markdown)
+          labels.each do |label|
+            markdown_with_original_caption = markdown.gsub(/( |\[)([^\[\]]*)\]\(([^\(\)]*)\)$/,
+                                                           "\\1#{label}](\\3)")
+            r = Regexp.compile('!?' + Regexp.escape("[#{label}](#{original_path})"))
+            body.gsub!(r, markdown_with_original_caption)
+          end
         else
           say "uploaded"
         end
