@@ -40,9 +40,7 @@ class DocPost < Thor
   @docpost_dir = Pathname.new(Dir.home) + '.docpost'
   @conf = { default:
               { submit:
-                  { teams:  nil,
-                    groups: nil,
-                    scope:  'private',
+                  { scope:  'private',
                     tags:   [],
                     draft:  false,
                     notice: true,
@@ -87,28 +85,53 @@ class DocPost < Thor
       help('print')
       exit 1
     end
+
+    if File.exist?(@path[:database])
+      begin
+        db = YAML.load_file(@path[:database])
+      rescue
+        error "loading database failed: #{@path[:database]}"
+        exit 1
+      end
+    else
+      db = { }
+    end
+    db = db.with_indifferent_access
+
     check_token_existence
     target = args.shift
     case target
     when 'teams'
-      response = get('https://api.docbase.io/teams')
-      JSON.parse(response.body).each_with_index do |h, i|
+      should_use_api = !db.key?(:teams)
+      if should_use_api
+        response = get('https://api.docbase.io/teams')
+        handle_response_code(response)
+        db[:teams] = JSON.parse(response.body)
+      end
+      db[:teams].each do |h|
         say "domain = #{h['domain']}, name = #{h['name']}"
       end
       say
-      handle_response_code(response)
-      handle_quota(response)
-      say
+      if should_use_api
+        handle_quota(response)
+        say
+      end
     when 'groups'
       teams = args.empty? ? @default[:print][:groups][:teams] : args
       unless teams
         error 'no team is specified'
         exit 1
       end
+      db[:groups] = { } unless db.key?(:groups)
       teams.each do |team|
         say "team: #{team}"
-        response = get("https://api.docbase.io/teams/#{team}/groups")
-        text_list = JSON.parse(response.body).map do |h|
+        should_use_api = !db[:groups].key?(team)
+        if should_use_api
+          response = get("https://api.docbase.io/teams/#{team}/groups")
+          handle_response_code(response)
+          db[:groups][team] = JSON.parse(response.body)
+        end
+        text_list = db[:groups][team].map do |h|
           names = @groups_name[h['id']]
           [h['id'].to_s + (names ? " (#{names.join(', ')})" : ''), h['name']]
         end
@@ -117,14 +140,16 @@ class DocPost < Thor
           say label + ' ' * (label_len - label.size) + ' : ' + desc
         end
         say
-        handle_response_code(response)
-        handle_quota(response)
-        say
+        if should_use_api
+          handle_quota(response)
+          say
+        end
       end
     else
       help('print')
       exit 1
     end
+    YAML.dump(db.to_hash, File.open(@path[:database], 'w'))
   end
 
   desc 'submit [FILE] [options]', 'Submit (r)markdown text to DocBase (read from STDIN when FILE is unspecified)'
@@ -214,9 +239,7 @@ class DocPost < Thor
       end
       path = @path[:token]
       begin
-        File.open(path, 'w') do |f|
-          f.puts YAML.dump(token: token)
-        end
+        YAML.dump({ token: token }, File.open(path, 'w'))
         FileUtils.chmod(0600, path)
       rescue
         error "failed to update token: #{path}"
@@ -231,7 +254,7 @@ class DocPost < Thor
       path = @path[:token]
       if path.present? && File.exist?(path)
         begin
-          YAML.load_file(path)
+          raise unless YAML.load_file(path).key?(:token)
           say 'token is registered'
         rescue
           say 'token file may be invalid'
@@ -249,8 +272,8 @@ class DocPost < Thor
   desc 'upload [{FILE,URI} ...]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
     { option: :teams,            type: :array,   default: default[:upload][:teams]                         },
-    { option: :collect_markdown, type: :boolean, default: default[:upload][:list_markdown], aliases: :'-c' },
-    { option: :name,             type: :string,  default: ''                              , aliases: :'-n' },
+    { option: :collect_markdown, type: :boolean, default: default[:upload][:collect_markdown], aliases: :'-c' },
+    { option: :name,             type: :string,  default: ''                                 , aliases: :'-n' },
   ]
   eval_options(:upload)
   def upload(*path_list)
@@ -594,7 +617,8 @@ class DocPost < Thor
     end
 
     def handle_quota(response)
-      say "remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']}, to be reset at: #{Time.at(response['x-ratelimit-reset'].to_i)}"
+      say "remaining quota: #{response['x-ratelimit-remaining']}/#{response['x-ratelimit-limit']}, "
+      say "to be reset at: #{Time.at(response['x-ratelimit-reset'].to_i)}"
     end
 
   end
