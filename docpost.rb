@@ -192,7 +192,7 @@ class DocPost < Thor
 
     submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
       opts[:groups].map! do |group|
-        if group.instance_of?(Integer)
+        if group =~ /^\d/
           group
         else
           v = @groups_dict[group]
