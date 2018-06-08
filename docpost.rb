@@ -309,7 +309,7 @@ class DocPost < Thor
     end
     say 'all files uploaded'
     say
-    if options[:collect_markdown]
+    if options[:collect_markdown] && markdown_list.size > 1
       say 'markdown list:'
       markdown_list.each do |markdown|
         say markdown, :green
@@ -619,7 +619,7 @@ class DocPost < Thor
             body.gsub!(r, markdown_with_original_caption)
           end
         else
-          say "uploaded"
+          say 'uploaded'
         end
         n -= 1
       end
