@@ -598,10 +598,8 @@ class DocPost < Thor
         uri = URI.parse(path)
         should_upload = false
         case uri
-        when URI::HTTP, URI::HTTPS
+        when URI::HTTP, URI::HTTPS, URI::FTP
           should_upload = true if 'full' == options[:upload]
-        when URI::FTP
-          should_upload = true
         when URI::Generic
           should_upload = true
           path = File.expand_path(path, dir)
