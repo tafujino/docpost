@@ -141,7 +141,7 @@ class DocPost < Thor
         end
         label_len = text_list.map(&:first).map(&:size).max
         text_list.each do |label, desc|
-          say label + ' ' * (label_len - label.size) + ' : ' + desc
+          say label + ' ' * (label_len - label.size) + ': ' + desc
         end
         say
         if should_use_api
