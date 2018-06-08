@@ -191,16 +191,18 @@ class DocPost < Thor
     end
 
     submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
-      opts[:groups].map! do |group|
-        if group =~ /^\d/
-          group
-        else
-          v = @groups_dict[group]
-          unless v
-            error "cannot find group: #{group}"
-            exit 1
+      if opts[:groups]
+        opts[:groups].map! do |group|
+          if group =~ /^\d/
+            group
+          else
+            v = @groups_dict[group]
+            unless v
+              error "cannot find group: #{group}"
+              exit 1
+            end
+            v
           end
-          v
         end
       end
 
@@ -395,7 +397,7 @@ class DocPost < Thor
         in_path = Pathname.new(in_path)
         dir = File.dirname(in_path)
         unless File.exist?(in_path)
-          error "file not exist: #{path}"
+          error "file not exist: #{in_path}"
           exit 1
         end
         body = File.read(in_path)
