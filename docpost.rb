@@ -8,9 +8,13 @@ require 'open-uri'
 require 'json'
 require 'yaml'
 require 'fileutils'
+require 'open3'
 require 'pathname'
 require 'active_support'
 require 'active_support/core_ext'
+require 'stringio'
+require 'tmpdir'
+require 'tempfile'
 
 MAX_CHAR_NUM   = 50000
 ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
@@ -186,50 +190,49 @@ class DocPost < Thor
       exit 1
     end
 
-    body, dir, file_type = submit_get_body(path, opts[:type], opts[:title])
-    # body = compile_body(body) if 'Rmd' == file_type
-
-    opts[:groups].map! do |group|
-      if group.instance_of?(Integer)
-        group
-      else
-        v = @groups_dict[group]
-        unless v
-          error "cannot find group: #{group}"
-          exit 1
+    submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
+      opts[:groups].map! do |group|
+        if group.instance_of?(Integer)
+          group
+        else
+          v = @groups_dict[group]
+          unless v
+            error "cannot find group: #{group}"
+            exit 1
+          end
+          v
         end
-        v
       end
-    end
 
-    opts[:teams].each do |team|
-      if body.size >= ALERT_CHAR_NUM
-        ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
-      end
-      body = upload_and_substitute_contents(team, body, dir, dry_run: opts[:dry_run])
-      if body.size >= MAX_CHAR_NUM
-        ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
-      end
-      json = {
-        title:  opts[:title],
-        body:   body,
-        draft:  opts[:draft],
-        scope:  opts[:scope],
-        tags:   opts[:tags],
-        groups: opts[:groups],
-        notice: opts[:notice],
-      }.compact.to_json
+      opts[:teams].each do |team|
+        if body.size >= ALERT_CHAR_NUM
+          ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
+        end
+        body = upload_and_substitute_contents(team, body, dir, dry_run: opts[:dry_run])
+        if body.size >= MAX_CHAR_NUM
+          ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
+        end
+        json = {
+          title:  title,
+          body:   body,
+          draft:  opts[:draft],
+          scope:  opts[:scope],
+          tags:   opts[:tags],
+          groups: opts[:groups],
+          notice: opts[:notice],
+        }.compact.to_json
 
-      say '(dry_run) ' if opts[:dry_run]
-      say 'submitting' + (path ? ": #{path}" : '') + ' ... '
-      response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
-      if opts[:dry_run]
-        say " uploaded"
-      else
-        handle_response_code(response)
-        handle_quota(response)
+        say '(dry_run) ' if opts[:dry_run]
+        say 'submitting' + (path ? ": #{path}" : '') + ' ... '
+        response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
+        if opts[:dry_run]
+          say " uploaded"
+        else
+          handle_response_code(response)
+          handle_quota(response)
+        end
+        say
       end
-      say
     end
   end
 
@@ -379,7 +382,7 @@ class DocPost < Thor
       [new_path, new_options]
     end
 
-    def submit_get_body(path, opt_type, opt_title)
+    def submit_get_body(in_path, opt_type, opt_title)
       check_title = proc do
         if opt_title.blank?
           error 'title is missing'
@@ -388,42 +391,93 @@ class DocPost < Thor
         end
       end
 
-      if path
-        dir = File.dirname(path)
-        unless File.exist?(path)
+      if in_path
+        in_path = Pathname.new(in_path)
+        dir = File.dirname(in_path)
+        unless File.exist?(in_path)
           error "file not exist: #{path}"
           exit 1
         end
-        body = File.read(path)
+        body = File.read(in_path)
         unless opt_type
-          ext = File.extname(path)
+          ext = File.extname(in_path)
           case ext
           when /^\.md$/i
             file_type = 'md'
             check_title.call
+            yield body, dir, opt_title
           when /^\.Rmd$/i
             file_type = 'Rmd'
+            out_path = in_path.sub_ext('.md')
+            opt_title = extract_title_from_rmarkdown(File.read(in_path)) if opt_title.blank?
+            check_title.call
+            render_rmarkdown(in_path, out_path)
+            body = File.read(out_path)
+            yield body, dir, opt_title
           else
             error "cannot determine file type: #{path}"
             exit 1
-        end
+          end
         end
       else
-        dir = Dir.pwd
         case opt_type
         when 'Rmd'
           body = STDIN.read
+          opt_title = extract_title_from_rmarkdown(body) if opt_title.blank?
+          check_title.call
+          Dir.mktmpdir do |dir|
+            in_file  = Tempfile.new(['', '.Rmd'], tempdir = dir)
+            out_file = Tempfile.new(['', '.md'],  tempdir = dir)
+            File.write(in_file, body)
+            render_rmarkdown(in_file.path, out_file.path)
+            body = File.read(out_file)
+            yield body, dir, opt_title
+          end
         when 'md'
           check_title.call
-          body = STDIN.read
+          yield STDIN.read, Dir.pwd, opt_title
         else
           check_title.call
-          body = STDIN.read
           say 'supposing file type is Markdown ... '
-          file_type = 'md'
+          yield STDIN.read, Dir.pwd, opt_title
         end
       end
-      [body, dir, file_type]
+    end
+
+    def extract_title_from_rmarkdown(body)
+      is_in_yaml = false
+      sio_yaml = StringIO.open('', 'w')
+      StringIO.open(body) do |sio_body|
+        sio_body.each do |line|
+          line.chomp!
+          next if line.empty?
+          if line =~ /^\-\-\-/
+            if is_in_yaml
+              break
+            else
+              is_in_yaml = true
+            end
+          else
+            sio_yaml.puts line if is_in_yaml
+          end
+        end
+      end
+      YAML.load(sio_yaml.string).with_indifferent_access[:title]
+    end
+
+    def render_rmarkdown(in_path, out_path, verbose: true)
+      r_cmd = <<EOS
+rmarkdown::render("#{in_path}", output_format = "md_document", output_file = "#{out_path}")
+EOS
+      ret = nil
+      Open3.popen3("#{@path[:R]} --slave --vanilla") do |i, o, e, w|
+        i.puts r_cmd
+        i.close
+        o.each { |line| puts        line; STDOUT.flush } if verbose
+        e.each { |line| STDERR.puts line; STDERR.flush } if verbose
+        ret = w.value
+      end
+      ret
     end
 
     def load_options_yaml(cmd, path)
