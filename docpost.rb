@@ -633,6 +633,7 @@ EOS
         content: Base64.strict_encode64(content)
       }.to_json
       response = post("https://api.docbase.io/teams/#{team}/attachments", json)
+      handle_response_code(response)
       markdown = JSON.parse(response.body)['markdown']
       markdown.gsub!(/^\[!\[txt\]\((.+)\)\s(.+)\.txt\]\((.+)\)$/, '[![txt](\1) \2](\3)') if add_text_ext
       [response, markdown]
@@ -697,6 +698,9 @@ EOS
         exit 1
       when 404
         error 'accessed to non-existent URL'
+        exit 1
+      when 413
+        error 'request entry too large'
         exit 1
       when 429
         error 'quota exceeded'
