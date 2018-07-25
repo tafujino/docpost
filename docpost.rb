@@ -190,22 +190,22 @@ class DocPost < Thor
       exit 1
     end
 
-    submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
-      if opts[:groups]
-        opts[:groups].map! do |group|
-          if group =~ /^\d/
-            group
-          else
-            v = @groups_dict[group]
-            unless v
-              error "cannot find group: #{group}"
-              exit 1
-            end
-            v
+    if opts[:groups]
+      opts[:groups].map! do |group|
+        if group =~ /^\d/
+          group
+        else
+          v = @groups_dict[group]
+          unless v
+            error "cannot find group: #{group}"
+            exit 1
           end
+          v
         end
       end
+    end
 
+    submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
       opts[:teams].each do |team|
         if body.size >= ALERT_CHAR_NUM
           ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
