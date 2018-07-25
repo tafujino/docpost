@@ -157,7 +157,7 @@ class DocPost < Thor
     YAML.dump(db.to_hash, File.open(@path[:database], 'w'))
   end
 
-  desc 'submit [FILE] [options]', 'Submit (R)markdown text to DocBase (read from STDIN when FILE is unspecified)'
+  desc 'submit [FILE] [options]', 'Submit (R) Markdown text to DocBase (read from STDIN when FILE is unspecified)'
   # for available parameters, see https://help.docbase.io/posts/92980
   # option priority: 1. options in YAML 2. options from a command line 3. in document (i.e. R Markdown title) 4. default
   @options_table[:submit] = [
@@ -618,14 +618,14 @@ EOS
       name ||= 'upload_content'
       name = Pathname.new(name)
       case name.extname
-        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
-          add_text_ext = false
-          uploaded_name = name
-        else
-          say 'supposing file type is plain text ... '
-          add_text_ext = true
-          ext = name.extname + '.txt'
-          uploaded_name = name.sub_ext(ext)
+      when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+        add_text_ext = false
+        uploaded_name = name
+      else
+        say 'supposing file type is plain text ... '
+        add_text_ext = true
+        ext = name.extname + '.txt'
+        uploaded_name = name.sub_ext(ext)
       end
       return nil if dry_run
       json = {
