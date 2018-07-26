@@ -53,10 +53,6 @@ class DocPost < Thor
             notice: true,
             upload: 'standard',
           },
-        upload:
-          {
-            collect_markdown: false,
-          }
       },
     groups:
       {
@@ -287,7 +283,6 @@ class DocPost < Thor
   desc 'upload [{FILE,URI} ...]', 'Upload content to DocBase (read from STDIN when FILE or URI is unspecified)'
   @options_table[:upload] = [
     { option: :teams,            type: :array,   default: default[:upload][:teams]                            },
-    { option: :collect_markdown, type: :boolean, default: default[:upload][:collect_markdown], aliases: :'-c' },
     { option: :name,             type: :string,  default: ''                                 , aliases: :'-n' },
   ]
   eval_options(:upload)
