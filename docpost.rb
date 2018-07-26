@@ -16,8 +16,8 @@ require 'stringio'
 require 'tmpdir'
 require 'tempfile'
 
-MAX_CHAR_NUM   = 50000
-ALERT_CHAR_NUM = MAX_CHAR_NUM - 100
+MAX_CHAR_NUM  = 50000
+UUID_CHAR_NUM = 36
 
 class DocPost < Thor
   class << self
@@ -42,29 +42,35 @@ class DocPost < Thor
   end
 
   @docpost_dir = Pathname.new(Dir.home) + '.docpost'
-  @conf = { default:
-              { submit:
-                  { scope:  'private',
-                    tags:   [],
-                    draft:  false,
-                    notice: true,
-                    upload: 'standard',
-                  },
-                upload:
-                  { collect_markdown: false,
-                  }
-              },
-            groups:
-              { name:
-                  { }
-              },
-            path:
-              { conf:     @docpost_dir + 'conf.yaml',
-                R:        nil,
-                token:    @docpost_dir + 'token.yaml',
-                database: @docpost_dir + 'database.yaml',
-              }
-          }.with_indifferent_access
+  @conf = {
+    default:
+      {
+        submit:
+          {
+            scope:  'private',
+            tags:   [],
+            draft:  false,
+            notice: true,
+            upload: 'standard',
+          },
+        upload:
+          {
+            collect_markdown: false,
+          }
+      },
+    groups:
+      {
+        name:
+          { }
+      },
+    path:
+      {
+        conf:     @docpost_dir + 'conf.yaml',
+        R:        nil,
+        token:    @docpost_dir + 'token.yaml',
+        database: @docpost_dir + 'database.yaml',
+      }
+  }.with_indifferent_access
 
   # should forbid from loading keys undefined in the above
   @conf.deep_merge!(load_config(conf[:path][:conf]))
@@ -205,36 +211,32 @@ class DocPost < Thor
       end
     end
 
-    submit_get_body(path, opts[:type], opts[:title]) do |body, dir, title|
-      opts[:teams].each do |team|
-        if body.size >= ALERT_CHAR_NUM
-          ask_continue("the number of letters in the original content is >= #{ALERT_CHAR_NUM}.")
-        end
-        body = upload_and_substitute_contents(team, body, dir, dry_run: opts[:dry_run])
-        if body.size >= MAX_CHAR_NUM
-          ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
-        end
-        json = {
-          title:  title,
-          body:   body,
-          draft:  opts[:draft],
-          scope:  opts[:scope],
-          tags:   opts[:tags],
-          groups: opts[:groups],
-          notice: opts[:notice],
-        }.compact.to_json
-
-        say '(dry_run) ' if opts[:dry_run]
-        say 'submitting' + (path ? ": #{path}" : '') + ' ... '
-        response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
-        if opts[:dry_run]
-          say " uploaded"
-        else
-          handle_response_code(response)
-          handle_quota(response)
-        end
-        say
+    body, dir, title = submit_get_body(path, opts[:type], opts[:title])
+    opts[:teams].each do |team|
+      body = upload_and_substitute_contents(team, body, dir, dry_run: opts[:dry_run])
+      if body.size >= MAX_CHAR_NUM
+        ask_continue("the number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
       end
+      json = {
+        title:  title,
+        body:   body,
+        draft:  opts[:draft],
+        scope:  opts[:scope],
+        tags:   opts[:tags],
+        groups: opts[:groups],
+        notice: opts[:notice],
+      }.compact.to_json
+
+      say '(dry_run) ' if opts[:dry_run]
+      say 'submitting' + (path ? ": #{path}" : '') + ' ... '
+      response = post("https://api.docbase.io/teams/#{team}/posts", json, opts[:dry_run])
+      if opts[:dry_run]
+        say " done"
+      else
+        handle_response_code(response)
+        handle_quota(response)
+      end
+      say
     end
   end
 
@@ -302,23 +304,12 @@ class DocPost < Thor
       exit 1
     end
     options[:teams].each do |team|
-      upload_list.each do |h|
-        response, markdown = upload_content(team, **h)
-        handle_response_code(response)
-        markdown_list.push(markdown)
-        say 'markdown: '
-        say markdown, :green
-        handle_quota(response)
-        say
-      end
-    end
-    say 'all files uploaded'
-    say
-    if options[:collect_markdown] && markdown_list.size > 1
-      say 'markdown list:'
+      say "#{team}:"
+      markdown_list = upload_contents(team, upload_list)
       markdown_list.each do |markdown|
         say markdown, :green
       end
+      say
     end
   end
 
@@ -407,7 +398,7 @@ class DocPost < Thor
           when /^\.md$/i
             file_type = 'md'
             check_title.call
-            yield body, dir, opt_title
+            return body, dir, opt_title
           when /^\.Rmd$/i
             file_type = 'Rmd'
             out_path = in_path.sub_ext('.md')
@@ -415,7 +406,7 @@ class DocPost < Thor
             check_title.call
             render_rmarkdown(in_path, out_path)
             body = File.read(out_path)
-            yield body, dir, opt_title
+            return body, dir, opt_title
           else
             error "cannot determine file type: #{path}"
             exit 1
@@ -433,15 +424,15 @@ class DocPost < Thor
             File.write(in_file, body)
             render_rmarkdown(in_file.path, out_file.path)
             body = File.read(out_file)
-            yield body, dir, opt_title
+            return body, dir, opt_title
           end
         when 'md'
           check_title.call
-          yield STDIN.read, Dir.pwd, opt_title
+          return STDIN.read, Dir.pwd, opt_title
         else
           check_title.call
           say 'supposing file type is Markdown ... '
-          yield STDIN.read, Dir.pwd, opt_title
+          return STDIN.read, Dir.pwd, opt_title
         end
       end
     end
@@ -513,12 +504,13 @@ EOS
           exit 1
         end
         if h.key?(:type)
-          type_to_class = { boolean: [TrueClass, FalseClass],
-                            string:  [String],
-                            numeric: [Numeric],
-                            array:   [Array],
-                            hash:    [Hash]
-                          }
+          type_to_class = {
+            boolean: [TrueClass, FalseClass],
+            string:  [String],
+            numeric: [Numeric],
+            array:   [Array],
+            hash:    [Hash]
+          }
           is_correct_type = type_to_class[h[:type]].inject(false) do |ret, klass|
             ret ||= opts[key].instance_of?(klass)
           end
@@ -603,82 +595,100 @@ EOS
       request(uri, Net::HTTP::Post, dry_run) { |request| request.body = json }
     end
 
-    def upload_content(team, path: nil, content: nil, name: nil, dry_run: false)
-      unless content
-        unless path
-          error 'fatal error. both path and content are not specified when uploading'
-          exit 1
+    def upload_contents(team, upload_list, dry_run: false)
+      # upload_list is an array where each element is either { path: ... } or { content: ..., name: ... }
+      say '(dry_run) ' if dry_run
+      upload_list.map! do |entry|
+        unless entry.key?(:content)
+          unless entry.key?(:path)
+            error 'fatal error. both path and content are not specified when uploading'
+            exit 1
+          end
+          entry[:name] ||= File.basename(entry[:path])
+          begin
+            open(entry[:path]) { |f| entry[:content] = f.read }
+          rescue
+            error "reading #{path} failed"
+            exit 1
+          end
         end
-        path = Pathname.new(path)
-        name ||= path.basename
-        say '(dry_run) ' if dry_run
-        say "reading and uploading: #{path} ... "
-        open(path.to_s) { |f| content = f.read }
+        entry[:name] = 'upload_content' if entry[:name].blank?
+        entry[:name] = Pathname.new(entry[:name])
+        case entry[:name].extname
+        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+          has_added_text_ext = false
+        else
+          say 'supposing file type is plain text ... '
+          ext = entry[:name].extname + '.txt'
+          entry[:name] = entry[:name].sub_ext(ext)
+          has_added_text_ext = true
+        end
+        {
+          payload:
+            {
+              name:    entry[:name].to_s,
+              content: Base64.strict_encode64(entry[:content])
+            },
+          has_added_text_ext: has_added_text_ext
+        }
       end
-      name ||= 'upload_content'
-      name = Pathname.new(name)
-      case name.extname
-      when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
-        add_text_ext = false
-        uploaded_name = name
-      else
-        say 'supposing file type is plain text ... '
-        add_text_ext = true
-        ext = name.extname + '.txt'
-        uploaded_name = name.sub_ext(ext)
-      end
-      return nil if dry_run
-      json = {
-        name:    uploaded_name,
-        content: Base64.strict_encode64(content)
-      }.to_json
-      response = post("https://api.docbase.io/teams/#{team}/attachments", json)
+      return [] if dry_run
+      response = post("https://api.docbase.io/teams/#{team}/attachments",
+                      upload_list.map { |entry| entry[:payload] }.to_json)
       handle_response_code(response)
-      markdown = JSON.parse(response.body)['markdown']
-      markdown.gsub!(/^\[!\[txt\]\((.+)\)\s(.+)\.txt\]\((.+)\)$/, '[![txt](\1) \2](\3)') if add_text_ext
-      [response, markdown]
+      handle_quota(response)
+      markdown_list = JSON.parse(response.body).map { |entry| entry["markdown"] }
+      has_added_text_ext_list = upload_list.map { |entry| entry[:has_added_text_ext] }
+      markdown_list = markdown_list.zip(has_added_text_ext_list).map do |markdown, has_added_text_ext|
+        markdown.gsub!(/^\[!\[txt\]\((.+)\)\s(.+)\.txt\]\((.+)\)$/, '[![txt](\1) \2](\3)') if has_added_text_ext
+        markdown
+      end
+      markdown_list
     end
 
     def upload_and_substitute_contents(team, body, dir, dry_run: false)
-      body = body.clone
       contents = body.scan(/\!?\[([^\[\]]*)\]\(([^\(\)]*)\)/).group_by(&:last).map do |k, v|
         [k, v.map(&:first)]
       end.to_h
-      n = contents.size
-      remaining_limit = nil
-      contents.each do |path, labels|
-        if remaining_limit && n > remaining_limit
-          ask_continue("the number of contents is greater than the number of remaining quota.")
-        end
-
-        original_path = path.clone
+      expected_body_size = body.size
+      contents = contents.map do |path, labels|
         uri = URI.parse(path)
-        should_upload = false
         case uri
         when URI::HTTP, URI::HTTPS, URI::FTP
-          should_upload = true if 'full' == options[:upload]
+          next unless 'full' == options[:upload]
+          upload_path = path
         when URI::Generic
-          should_upload = true
-          path = File.expand_path(path, dir)
+          upload_path = File.expand_path(path, dir)
         else
-          error "cannot upload the following content: #{path}"
+          error "cannot determine the location of the following content: #{path}"
           exit 1
         end
-        next unless should_upload
-        response, markdown = upload_content(team, path: path, dry_run: dry_run)
-        unless dry_run
-          remaining_limit = response['x-ratelimit-remaining'].to_i
-          say "uploaded (remaining quota: #{remaining_limit}/#{response['x-ratelimit-limit']})"
-          labels.each do |label|
-            markdown_with_original_caption = markdown.gsub(/( |\[)([^\[\]]*)\]\(([^\(\)]*)\)$/,
-                                                           "\\1#{label}](\\3)")
-            r = Regexp.compile('!?' + Regexp.escape("[#{label}](#{original_path})"))
-            body.gsub!(r, markdown_with_original_caption)
-          end
-        else
-          say 'uploaded'
+        expected_body_size += UUID_CHAR_NUM - Pathname.new(path).basename.sub_ext('').to_s.size
+        {
+          original_path: path,
+          upload_path:   upload_path,
+          labels:        labels,
+        }
+      end.compact!
+      return if contents.empty?
+      if expected_body_size >= MAX_CHAR_NUM
+        ask_continue("the expected number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
+      end
+      say 'uploading contents within the document ... '
+      if dry_run
+        say 'done'
+        return body
+      end
+      markdown_list = upload_contents(team,
+                                      contents.map { |entry| { path: entry[:upload_path] } },
+                                      dry_run: dry_run)
+      markdown_list.zip(contents).each do |markdown, entry|
+        entry[:labels].each do |label|
+          markdown_with_original_caption = markdown.gsub(/( |\[)([^\[\]]*)\]\(([^\(\)]*)\)$/,
+                                                         "\\1#{label}](\\3)")
+          r = Regexp.compile('!?' + Regexp.escape("[#{label}](#{entry[:original_path]})"))
+          body.gsub!(r, markdown_with_original_caption)
         end
-        n -= 1
       end
       body
     end
