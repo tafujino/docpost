@@ -251,7 +251,8 @@ class DocPost < Thor
       end
       path = @path[:token]
       begin
-        FileUtils.mkpath(File.dirname(path))
+        token_dir = File.dirname(path)
+        FileUtils.mkpath(token_dir, mode: 0700)
         YAML.dump({ token: token }, File.open(path, 'w'))
         FileUtils.chmod(0600, path)
       rescue
@@ -531,22 +532,26 @@ EOS
       opts
     end
 
-    def check_token_permission
-      path = @path[:token]
+    def check_permission(path, mode, desc)
       return unless path.present?
       return unless File.exist?(path)
-      mode = '%o' % File.stat(path).mode
-      permission = mode[-3, 3]
-      unless '600' == permission
-        error "currently token file is set to mode #{permission}"
+      permission = ('%o' % File.stat(path).mode)[-3, 3]
+      mode_oct_str = mode.to_s(8)
+      unless mode_oct_str == permission
+        error "currently #{desc} is set to mode #{permission}"
         begin
-          FileUtils.chmod(0600, path)
-          say "changed to mode 600: #{path}"
+          FileUtils.chmod(mode, path)
+          say "changed to mode #{mode_oct_str}: #{path}"
         rescue
           error "unable to change permission: #{path}"
           exit 1
         end
       end
+    end
+
+    def check_token_permission
+      check_permission(@path[:token].dirname, 0700, 'token file directory')
+      check_permission(@path[:token],         0600, 'token file')
     end
 
     def load_token
