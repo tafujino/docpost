@@ -252,7 +252,8 @@ class DocPost < Thor
       path = @path[:token]
       begin
         token_dir = File.dirname(path)
-        FileUtils.mkpath(token_dir, mode: 0700)
+        FileUtils.mkpath(token_dir)
+        FileUtils.chmod(0700, token_dir)
         YAML.dump({ token: token }, File.open(path, 'w'))
         FileUtils.chmod(0600, path)
       rescue
