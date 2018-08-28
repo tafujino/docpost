@@ -609,7 +609,7 @@ EOS
           begin
             open(entry[:path]) { |f| entry[:content] = f.read }
           rescue
-            error "reading #{path} failed"
+            error "reading #{entry[:path]} failed"
             exit 1
           end
         end
@@ -648,7 +648,7 @@ EOS
     end
 
     def upload_and_substitute_contents(team, body, dir, dry_run: false)
-      contents = body.scan(/\!?\[([^\[\]]*)\]\(([^\(\)]*)\)/).group_by(&:last).map do |k, v|
+      contents = body.scan(/\!?\[(.+)\]\((.+)\)/).group_by(&:last).map do |k, v|
         [k, v.map(&:first)]
       end.to_h
       expected_body_size = body.size
@@ -670,7 +670,7 @@ EOS
           upload_path:   upload_path,
           labels:        labels,
         }
-      end.compact!
+      end.compact
       return if contents.empty?
       if expected_body_size >= MAX_CHAR_NUM
         ask_continue("the expected number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
