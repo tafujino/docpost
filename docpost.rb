@@ -401,7 +401,7 @@ class DocPost < Thor
             out_path = in_path.sub_ext('.md')
             opt_title = extract_title_from_rmarkdown(File.read(in_path)) if opt_title.blank?
             check_title.call
-            render_rmarkdown(in_path, out_path)
+            render_rmarkdown(in_path)
             body = File.read(out_path)
             return body, dir, opt_title
           else
@@ -419,7 +419,7 @@ class DocPost < Thor
             in_file  = Tempfile.new(['', '.Rmd'], tempdir = dir)
             out_file = Tempfile.new(['', '.md'],  tempdir = dir)
             File.write(in_file, body)
-            render_rmarkdown(in_file.path, out_file.path)
+            render_rmarkdown(in_file.path)
             body = File.read(out_file)
             return body, dir, opt_title
           end
@@ -455,9 +455,9 @@ class DocPost < Thor
       YAML.load(sio_yaml.string).with_indifferent_access[:title]
     end
 
-    def render_rmarkdown(in_path, out_path, verbose: true)
+    def render_rmarkdown(path, verbose: true)
       r_cmd = <<EOS
-rmarkdown::render("#{in_path}", output_format = "md_document", output_file = "#{out_path}")
+rmarkdown::render("#{path}", output_format = "md_document")
 EOS
       ret = nil
       Open3.popen3("#{@path[:R]} --slave --vanilla") do |i, o, e, w|
