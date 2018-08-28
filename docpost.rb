@@ -457,7 +457,8 @@ class DocPost < Thor
 
     def render_rmarkdown(path, verbose: true)
       r_cmd = <<EOS
-rmarkdown::render("#{path}", output_format = "md_document")
+library("rmarkdown")
+render("#{path}", md_document(pandoc_args="--wrap=preserve"))
 EOS
       ret = nil
       Open3.popen3("#{@path[:R]} --slave --vanilla") do |i, o, e, w|
