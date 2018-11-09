@@ -53,6 +53,10 @@ class DocPost < Thor
             notice: true,
             upload: 'standard',
           },
+        upload:
+          {
+            teams: [],
+          }
       },
     groups:
       {
