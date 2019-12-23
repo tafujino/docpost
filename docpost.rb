@@ -617,7 +617,7 @@ EOS
         entry[:name] = 'upload_content' if entry[:name].blank?
         entry[:name] = Pathname.new(entry[:name])
         case entry[:name].extname
-        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/, /^\.docx?$/i, /^\.xlsx?$/i, /^\.pptx?$/i
           has_added_text_ext = false
         else
           say 'supposing file type is plain text ... '
