@@ -53,6 +53,10 @@ class DocPost < Thor
             notice: true,
             upload: 'standard',
           },
+        upload:
+          {
+            teams: [],
+          }
       },
     groups:
       {
@@ -401,7 +405,7 @@ class DocPost < Thor
             out_path = in_path.sub_ext('.md')
             opt_title = extract_title_from_rmarkdown(File.read(in_path)) if opt_title.blank?
             check_title.call
-            render_rmarkdown(in_path, out_path)
+            render_rmarkdown(in_path)
             body = File.read(out_path)
             return body, dir, opt_title
           else
@@ -419,7 +423,7 @@ class DocPost < Thor
             in_file  = Tempfile.new(['', '.Rmd'], tempdir = dir)
             out_file = Tempfile.new(['', '.md'],  tempdir = dir)
             File.write(in_file, body)
-            render_rmarkdown(in_file.path, out_file.path)
+            render_rmarkdown(in_file.path)
             body = File.read(out_file)
             return body, dir, opt_title
           end
@@ -455,9 +459,10 @@ class DocPost < Thor
       YAML.load(sio_yaml.string).with_indifferent_access[:title]
     end
 
-    def render_rmarkdown(in_path, out_path, verbose: true)
+    def render_rmarkdown(path, verbose: true)
       r_cmd = <<EOS
-rmarkdown::render("#{in_path}", output_format = "md_document", output_file = "#{out_path}")
+library("rmarkdown")
+render("#{path}", md_document(pandoc_args="--wrap=preserve"))
 EOS
       ret = nil
       Open3.popen3("#{@path[:R]} --slave --vanilla") do |i, o, e, w|
@@ -609,14 +614,14 @@ EOS
           begin
             open(entry[:path]) { |f| entry[:content] = f.read }
           rescue
-            error "reading #{path} failed"
+            error "reading #{entry[:path]} failed"
             exit 1
           end
         end
         entry[:name] = 'upload_content' if entry[:name].blank?
         entry[:name] = Pathname.new(entry[:name])
         case entry[:name].extname
-        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/i
+        when /^\.jpe?g$/i, /^\.png$/i, /^\.gif$/i, /^\.svg$/i, /^\.pdf$/i, /^\.txt$/, /^\.docx?$/i, /^\.xlsx?$/i, /^\.pptx?$/i
           has_added_text_ext = false
         else
           say 'supposing file type is plain text ... '
@@ -648,7 +653,7 @@ EOS
     end
 
     def upload_and_substitute_contents(team, body, dir, dry_run: false)
-      contents = body.scan(/\!?\[([^\[\]]*)\]\(([^\(\)]*)\)/).group_by(&:last).map do |k, v|
+      contents = body.scan(/\!?\[(.+)\]\((.+)\)/).group_by(&:last).map do |k, v|
         [k, v.map(&:first)]
       end.to_h
       expected_body_size = body.size
@@ -670,7 +675,7 @@ EOS
           upload_path:   upload_path,
           labels:        labels,
         }
-      end.compact!
+      end.compact
       return if contents.empty?
       if expected_body_size >= MAX_CHAR_NUM
         ask_continue("the expected number of letters after embedding contents is >= #{MAX_CHAR_NUM}.")
